@@ -313,11 +313,73 @@ jobs:
           test -n "$PACKAGE" || { echo "::error::PSXRecomp packager produced no zip."; exit 1; }
           cp "$PACKAGE" "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip"
 
+      - name: Build macOS .app bundle and DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          PACKAGE="$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$PACKAGE" || { echo "::error::No macOS package zip was produced."; exit 1; }
+          STAGE="$RUNNER_TEMP/gex-macos-stage"
+          APP="$STAGE/Gex Enter the Gecko.app"
+          CONTENTS="$APP/Contents"
+          MACOS="$CONTENTS/MacOS"
+          rm -rf "$STAGE"
+          mkdir -p "$MACOS"
+          ditto -x -k "$PACKAGE" "$RUNNER_TEMP/gex-macos-unpacked"
+          UNPACKED="$RUNNER_TEMP/gex-macos-unpacked"
+          # The upstream bundle is a portable runtime tree. Keep every runtime
+          # file beside its executable inside Contents/MacOS so relative paths
+          # continue to resolve exactly as they do in the ZIP distribution.
+          EXECUTABLE="$(find "$UNPACKED" -type f -name 'GexEnterTheGeckoRecomp' -perm -111 -print -quit)"
+          if [[ -z "$EXECUTABLE" ]]; then
+            EXECUTABLE="$(find "$UNPACKED" -type f -perm -111 ! -path '*/.git/*' -print -quit)"
+          fi
+          test -n "$EXECUTABLE" || { echo "::error::Could not locate the macOS game executable in the PSXRecomp package."; find "$UNPACKED" -maxdepth 3 -type f; exit 1; }
+          cp -R "$UNPACKED"/. "$MACOS"/
+          if [[ "$EXECUTABLE" != "$UNPACKED"/* ]]; then
+            echo "::error::Resolved executable path was outside the unpacked package."; exit 1
+          fi
+          RELATIVE_EXECUTABLE="${EXECUTABLE#"$UNPACKED"/}"
+          if [[ "$RELATIVE_EXECUTABLE" != "GexEnterTheGeckoRecomp" ]]; then
+            if [[ -f "$MACOS/$RELATIVE_EXECUTABLE" ]]; then
+              mv "$MACOS/$RELATIVE_EXECUTABLE" "$MACOS/GexEnterTheGeckoRecomp"
+            fi
+          fi
+          cat > "$CONTENTS/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>GexEnterTheGeckoRecomp</string>
+            <key>CFBundleIdentifier</key><string>com.nvdemu.gexenterthegecko.recomp</string>
+            <key>CFBundleName</key><string>Gex Enter the Gecko</string>
+            <key>CFBundleDisplayName</key><string>Gex: Enter the Gecko</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.0.${GITHUB_RUN_NUMBER}</string>
+            <key>CFBundleVersion</key><string>${GITHUB_RUN_NUMBER}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$CONTENTS/Info.plist"
+          chmod +x "$MACOS/GexEnterTheGeckoRecomp"
+          # Retain a downloadable app ZIP as well as a drag-and-drop DMG.
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.app.zip"
+          hdiutil create -volname "Gex Enter the Gecko" -srcfolder "$APP" -ov -format UDZO "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.dmg"
+          echo "Created macOS app bundle ZIP and DMG."
+
       - name: Upload platform package
         uses: actions/upload-artifact@v4
         with:
           name: gex-${{ matrix.artifact }}
-          path: dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip
+          path: |
+            dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip
+            dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.app.zip
+            dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.dmg
           if-no-files-found: error
           retention-days: 7
 
@@ -343,7 +405,7 @@ jobs:
           allowUpdates: true
           removeArtifacts: true
           replacesArtifacts: true
-          artifacts: dist/*.zip
+          artifacts: dist/*.zip,dist/*.dmg
           body: |
             Automated native builds of Gex: Enter the Gecko Recomp using PSXRecomp.
             Original game media is not included. Supply your own legally obtained disc.
