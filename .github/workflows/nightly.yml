@@ -123,6 +123,45 @@ jobs:
           git clone https://github.com/RetroPortingToolKit/psxrecomp.git "$FRAMEWORK_CHECKOUT"
           git -C "$FRAMEWORK_CHECKOUT" checkout "$PSXRECOMP_SHA"
           git -C "$FRAMEWORK_CHECKOUT" submodule update --init --recursive
+
+          # The upstream scaffolder passes --psxrecomp-ref/--recomp-ui-ref
+          # to "git submodule add -b", which accepts branch names, not raw SHAs.
+          # Patch this temporary checkout to clone master and then pin exact SHAs.
+          python3 - "$FRAMEWORK_CHECKOUT/tools/new_project_layout/setup_project.sh" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          old = "\n".join([
+              'git submodule add -b "$PSXRECOMP_REF" "$PSXRECOMP_URL" psxrecomp',
+              'if [ "$ENABLE_RECOMP_UI" -eq 1 ]; then',
+              '    git submodule add -b "$RECOMP_UI_REF" "$RECOMP_UI_URL" recomp-ui',
+              'fi',
+              'git submodule update --init --recursive',
+          ])
+          new = "\n".join([
+              'git submodule add -b master "$PSXRECOMP_URL" psxrecomp',
+              'if [ "$ENABLE_RECOMP_UI" -eq 1 ]; then',
+              '    git submodule add -b master "$RECOMP_UI_URL" recomp-ui',
+              'fi',
+              'git submodule update --init --recursive',
+              '',
+              '# git submodule add -b needs a branch name; pin SHAs after cloning.',
+              'git -C psxrecomp fetch -q origin "$PSXRECOMP_REF"',
+              'git -C psxrecomp checkout --detach -q "$PSXRECOMP_REF"',
+              'git -C psxrecomp submodule update --init --recursive',
+              'if [ "$ENABLE_RECOMP_UI" -eq 1 ]; then',
+              '    git -C recomp-ui fetch -q origin "$RECOMP_UI_REF"',
+              '    git -C recomp-ui checkout --detach -q "$RECOMP_UI_REF"',
+              'fi',
+          ])
+          if source.count(old) != 1:
+              raise SystemExit("Could not safely patch the pinned PSXRecomp scaffolder's submodule block.")
+          path.write_text(source.replace(old, new, 1))
+          print("Patched scaffolder: clone branches, then check out the pinned PSXRecomp/recomp-ui SHAs.")
+          PY
+
           echo "FRAMEWORK_CHECKOUT=$FRAMEWORK_CHECKOUT" >> "$GITHUB_ENV"
 
       - name: Download and verify original disc from Dropbox
