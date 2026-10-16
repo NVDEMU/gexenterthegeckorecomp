@@ -81,17 +81,26 @@ jobs:
         shell: bash
         env:
           GEX_ASSETS_TOKEN: ${{ secrets.GEX_ASSETS_TOKEN }}
+          DROPBOX_SHARED_URL: ${{ secrets.DROPBOX_SHARED_URL }}
           DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
           DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
           DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
         run: |
           set -euo pipefail
-          for name in GEX_ASSETS_TOKEN DROPBOX_APP_KEY DROPBOX_APP_SECRET DROPBOX_REFRESH_TOKEN; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error title=Missing Actions secret::Configure ${name} using docs/BUILD_SETUP.md before running the Gex build."
-              exit 1
-            fi
-          done
+          if [[ -z "${GEX_ASSETS_TOKEN:-}" ]]; then
+            echo "::error title=Missing Actions secret::Configure GEX_ASSETS_TOKEN using docs/BUILD_SETUP.md."
+            exit 1
+          fi
+          # A Dropbox shared URL avoids OAuth setup. Otherwise use the private
+          # OAuth refresh-token route if all three OAuth secrets are present.
+          if [[ -z "${DROPBOX_SHARED_URL:-}" ]]; then
+            for name in DROPBOX_APP_KEY DROPBOX_APP_SECRET DROPBOX_REFRESH_TOKEN; do
+              if [[ -z "${!name:-}" ]]; then
+                echo "::error title=Missing Dropbox credential::Configure DROPBOX_SHARED_URL (easiest) or all three OAuth secrets described in docs/BUILD_SETUP.md."
+                exit 1
+              fi
+            done
+          fi
 
       - name: Checkout private asset metadata
         uses: actions/checkout@v4
@@ -119,6 +128,7 @@ jobs:
       - name: Download and verify original disc from Dropbox
         shell: bash
         env:
+          DROPBOX_SHARED_URL: ${{ secrets.DROPBOX_SHARED_URL }}
           DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
           DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
           DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
@@ -134,19 +144,37 @@ jobs:
           BIN="$ASSET_DIR/Gex - Enter the Gecko.bin"
           test -s "$CUE" || { echo "::error::Private CUE file is missing from gexprivateassets."; exit 1; }
 
-          AUTH_JSON="$(curl --fail --silent --show-error --user "${DROPBOX_APP_KEY}:${DROPBOX_APP_SECRET}" \
-            --data-urlencode "grant_type=refresh_token" \
-            --data-urlencode "refresh_token=${DROPBOX_REFRESH_TOKEN}" \
-            https://api.dropbox.com/oauth2/token)"
-          DROPBOX_ACCESS_TOKEN="$(printf '%s' "$AUTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
-          unset AUTH_JSON
-          echo "::add-mask::${DROPBOX_ACCESS_TOKEN}"
-          curl --fail --silent --show-error --location --request POST \
-            --header "Authorization: Bearer ${DROPBOX_ACCESS_TOKEN}" \
-            --header 'Dropbox-API-Arg: {"path": "/Gex - Enter the Gecko.bin"}' \
-            --output "$BIN" \
-            https://content.dropboxapi.com/2/files/download
-          unset DROPBOX_ACCESS_TOKEN
+          if [[ -n "${DROPBOX_SHARED_URL:-}" ]]; then
+            # Normalize a Dropbox share URL to a direct download URL without
+            # printing the secret link into Actions logs.
+            DOWNLOAD_URL="$(python3 - "$DROPBOX_SHARED_URL" <<'PY'
+          import sys
+          from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+          u = urlsplit(sys.argv[1])
+          if u.scheme != "https" or u.hostname not in {"www.dropbox.com", "dropbox.com", "www.dropboxusercontent.com", "dropboxusercontent.com"}:
+              raise SystemExit("DROPBOX_SHARED_URL must be a valid HTTPS Dropbox URL.")
+          q = [(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True) if k != "dl"]
+          q.append(("dl", "1"))
+          print(urlunsplit((u.scheme, u.netloc, u.path, urlencode(q), u.fragment)))
+          PY
+          )"
+            curl --fail --silent --show-error --location "$DOWNLOAD_URL" --output "$BIN"
+            unset DOWNLOAD_URL
+          else
+            AUTH_JSON="$(curl --fail --silent --show-error --user "${DROPBOX_APP_KEY}:${DROPBOX_APP_SECRET}" \
+              --data-urlencode "grant_type=refresh_token" \
+              --data-urlencode "refresh_token=${DROPBOX_REFRESH_TOKEN}" \
+              https://api.dropbox.com/oauth2/token)"
+            DROPBOX_ACCESS_TOKEN="$(printf '%s' "$AUTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+            unset AUTH_JSON
+            echo "::add-mask::${DROPBOX_ACCESS_TOKEN}"
+            curl --fail --silent --show-error --location --request POST \
+              --header "Authorization: Bearer ${DROPBOX_ACCESS_TOKEN}" \
+              --header 'Dropbox-API-Arg: {"path": "/Gex - Enter the Gecko.bin"}' \
+              --output "$BIN" \
+              https://content.dropboxapi.com/2/files/download
+            unset DROPBOX_ACCESS_TOKEN
+          fi
 
           ACTUAL_SIZE="$(wc -c < "$BIN" | tr -d '[:space:]')"
           if [[ "$ACTUAL_SIZE" != "266662704" ]]; then
