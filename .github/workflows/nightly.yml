@@ -175,8 +175,8 @@ jobs:
           if not mac_packager.is_file():
               raise SystemExit("Pinned PSXRecomp macOS packager was not found.")
           package_source = mac_packager.read_text()
+          unsafe_loop = 'for m in "${REQUIRE_MODS[@]}"; do'
           safe_loop = 'for m in "${REQUIRE_MODS[@]-}"; do\n    [[ -n "$m" ]] || continue'
-          safe_loop = 'for m in "${REQUIRE_MODS[@]-}"; do'
           if unsafe_loop in package_source:
               package_source = package_source.replace(unsafe_loop, safe_loop, 1)
           elif safe_loop not in package_source:
