@@ -47,10 +47,12 @@ static const char *const g_resource_ids[CLIP_COUNT] = {
 };
 
 static uint8_t g_clip_ready[CLIP_COUNT];
+static uint32_t g_clip_duration_frames[CLIP_COUNT];
 static uint32_t g_frame;
 static uint32_t g_last_input_frame;
 static uint32_t g_next_move_frame;
 static uint32_t g_next_idle_frame;
+static uint32_t g_play_until_frame;
 static uint32_t g_invalid_player_frames;
 static uint16_t g_last_health;
 static int g_last_health_known;
@@ -58,6 +60,7 @@ static int g_saw_live_player;
 static int g_death_transition;
 static int g_pending_level_entry;
 static int g_movement_down;
+static int g_cross_down;
 
 static uint32_t scott_be32(const uint8_t *p) {
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
@@ -129,6 +132,8 @@ static int scott_load_vag(enum ScottClip clip) {
                 g_resource_ids[clip]);
         goto done;
     }
+    g_clip_duration_frames[clip] = (uint32_t)(((uint64_t)(data_size / 16u) * 28u * 60u + 22049u) / 22050u);
+    if (!g_clip_duration_frames[clip]) g_clip_duration_frames[clip] = 1u;
     ok = 1;
 
 done:
@@ -151,8 +156,11 @@ static int scott_play(enum ScottClip clip) {
     };
 
     if (clip >= CLIP_COUNT || !g_clip_ready[clip]) return 0;
-    return psx_mod_spu_private_voice_play(
-        VOICE_SLOT, (uint32_t)clip + 1u, regs, 0u);
+    if (!psx_mod_spu_private_voice_play(
+            VOICE_SLOT, (uint32_t)clip + 1u, regs, 0u)) return 0;
+    /* A PS1 voice remains logically active after its end block, but is silent. */
+    g_play_until_frame = g_frame + g_clip_duration_frames[clip] + 1u;
+    return 1;
 }
 
 static int scott_any_input(const PSXModPadFrame *frame) {
@@ -166,9 +174,8 @@ static int scott_movement_input(const PSXModPadFrame *frame) {
     const int dx = (int)frame->lx - 128;
     const int dy = (int)frame->ly - 128;
     const int dpad = (frame->buttons & 0x00f0u) != 0x00f0u;
-    const int cross_pressed = (frame->buttons & 0x4000u) == 0u;
     const int stick = dx < -24 || dx > 24 || dy < -24 || dy > 24;
-    return dpad || cross_pressed || stick;
+    return dpad || stick;
 }
 
 static int scott_pad_transform(const PSXModPadFrame *frame,
@@ -183,9 +190,15 @@ static int scott_pad_transform(const PSXModPadFrame *frame,
     }
 
     moving = scott_movement_input(frame);
-    if (moving && !g_movement_down && g_frame >= g_next_move_frame) {
-        (void)scott_play(CLIP_MOVEMENT_JUMP);
-        g_next_move_frame = g_frame + FRAME_MOVE_COOLDOWN;
+    {
+        int cross_pressed = (frame->buttons & 0x4000u) == 0u;
+        int new_action = (moving && !g_movement_down) ||
+                         (cross_pressed && !g_cross_down);
+        if (new_action && g_frame >= g_next_move_frame) {
+            (void)scott_play(CLIP_MOVEMENT_JUMP);
+            g_next_move_frame = g_frame + FRAME_MOVE_COOLDOWN;
+        }
+        g_cross_down = cross_pressed;
     }
     g_movement_down = moving;
     /* Return zero: deliver the original controller frame unchanged. */
@@ -249,7 +262,7 @@ static void scott_vblank(void) {
 
         if ((uint32_t)(g_frame - g_last_input_frame) >= FRAME_IDLE_DELAY &&
             g_frame >= g_next_idle_frame &&
-            (psx_mod_spu_private_voice_active() & (1u << VOICE_SLOT)) == 0u) {
+            g_frame >= g_play_until_frame) {
             if (scott_play(CLIP_IDLE))
                 g_next_idle_frame = g_frame + FRAME_IDLE_REPEAT;
         }
@@ -264,6 +277,8 @@ static void scott_activate(void) {
     g_last_input_frame = 0;
     g_next_move_frame = 0;
     g_next_idle_frame = 0;
+    g_play_until_frame = 0;
+    memset(g_clip_duration_frames, 0, sizeof(g_clip_duration_frames));
     g_invalid_player_frames = 0;
     g_last_health = 0;
     g_last_health_known = 0;
@@ -271,6 +286,7 @@ static void scott_activate(void) {
     g_death_transition = 0;
     g_pending_level_entry = 0;
     g_movement_down = 0;
+    g_cross_down = 0;
 
     psx_mod_spu_private_voice_stop(1u << VOICE_SLOT);
     for (i = 0; i < CLIP_COUNT; ++i) {

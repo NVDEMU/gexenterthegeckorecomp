@@ -28,6 +28,7 @@ The public repository includes four source MP3s for an optional, default-off
 **Scott the Woz Voice Pack**. The Nightly workflow converts them into PS1 ADPCM
 resources and bundles an experimental mod into Windows/macOS releases. Its
 first-pass level, movement, death, and idle triggers need real in-game testing;
+the initial prototype plays mapped voice cues but does not yet mute matching original samples.
 see [the voice-pack notes](docs/SCOTT_VOICEPACK.md). The original disc is still
 required and is never patched.
 

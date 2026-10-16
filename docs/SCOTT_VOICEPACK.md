@@ -5,7 +5,9 @@ Gex: Enter the Gecko (SLUS-00598). The four public MP3s in the repository root
 are the source assets. Nightly builds resample them to mono 22,050-Hz PCM and
 encode them into VAG/PS1 ADPCM resources, which the trusted plugin plays through
 PSXRecomp's private SPU voice path. The original game's disc image is not
-patched, and the original SPU voices remain available.
+patched. This first prototype triggers the custom clips at mapped moments; it
+does not yet suppress individual stock Gex voice samples, so the original line
+or sound can sometimes still be heard underneath.
 
 ## Planned four clips
 
@@ -25,7 +27,8 @@ patched, and the original SPU voices remain available.
   analog-stick movement begins. A cooldown prevents constant retriggering.
 - **Death:** when the tracked health value transitions from 1–4 to zero.
 - **Idle:** after ten seconds without controller input; it may repeat no more
-  often than every thirty seconds.
+  often than every thirty seconds. Playback duration is tracked from the encoded
+  ADPCM length because PS1 voices can remain logically active after their end block.
 
 The first-pass player-state guard uses RAM addresses commonly listed for the
 USA release (0x80095310 lives, 0x80095314 health). They are not verified debug

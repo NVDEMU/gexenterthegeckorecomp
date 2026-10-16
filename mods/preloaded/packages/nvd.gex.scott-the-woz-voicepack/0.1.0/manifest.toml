@@ -14,7 +14,7 @@ game_id = "SLUS-00598"
 [[feature]]
 id = "scott-voicepack"
 name = "Scott the Woz Voice Pack"
-description = "Replaces selected gameplay moments with four bundled Scott voice clips."
+description = "Experimental four-clip voice cues for selected Gex gameplay moments."
 group = "Audio"
 default_enabled = false
 channel = "experimental"
