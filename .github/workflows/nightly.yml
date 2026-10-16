@@ -1,0 +1,273 @@
+name: Gex Nightly
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gex-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned, known revisions of the PSXRecomp framework and shared launcher UI.
+  PSXRECOMP_SHA: 379565a6ffc2d399dcb53441dfb0e881ad39b043
+  RECOMP_UI_SHA: 0546fbcb0126bb14bf88d2128b4fe8a4229570a3
+  PSXRECOMP_URL: https://github.com/RetroPortingToolKit/psxrecomp.git
+  RECOMP_UI_URL: https://github.com/RetroPortingToolKit/recomp-ui.git
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            artifact: windows-x64
+            shell: 'msys2 {0}'
+          - os: macos-15
+            artifact: macos-arm64
+            shell: bash
+            deployment_target: '11.0'
+          - os: macos-15-intel
+            artifact: macos-x64
+            shell: bash
+            deployment_target: '11.0'
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target || '' }}
+
+    steps:
+      - name: Checkout public project
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            curl
+            zip
+            unzip
+            jq
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-shaderc
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          brew install cmake ninja pkg-config sdl3 vulkan-headers shaderc molten-vk jq
+
+      - name: Check required secrets
+        shell: bash
+        env:
+          GEX_ASSETS_TOKEN: ${{ secrets.GEX_ASSETS_TOKEN }}
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in GEX_ASSETS_TOKEN DROPBOX_APP_KEY DROPBOX_APP_SECRET DROPBOX_REFRESH_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error title=Missing Actions secret::Configure ${name} using docs/BUILD_SETUP.md before running the Gex build."
+              exit 1
+            fi
+          done
+
+      - name: Checkout private asset metadata
+        uses: actions/checkout@v4
+        with:
+          repository: NVDEMU/gexprivateassets
+          token: ${{ secrets.GEX_ASSETS_TOKEN }}
+          path: .private-assets
+          fetch-depth: 1
+
+      - name: Install PSXRecomp scaffolder at pinned revision
+        run: |
+          set -euo pipefail
+          if command -v cygpath >/dev/null 2>&1; then
+            TEMP_DIR="$(cygpath -u "$RUNNER_TEMP")"
+          else
+            TEMP_DIR="$RUNNER_TEMP"
+          fi
+          FRAMEWORK_CHECKOUT="$TEMP_DIR/psxrecomp-scaffold-source"
+          rm -rf "$FRAMEWORK_CHECKOUT"
+          git clone https://github.com/RetroPortingToolKit/psxrecomp.git "$FRAMEWORK_CHECKOUT"
+          git -C "$FRAMEWORK_CHECKOUT" checkout "$PSXRECOMP_SHA"
+          git -C "$FRAMEWORK_CHECKOUT" submodule update --init --recursive
+          echo "FRAMEWORK_CHECKOUT=$FRAMEWORK_CHECKOUT" >> "$GITHUB_ENV"
+
+      - name: Download and verify original disc from Dropbox
+        shell: bash
+        env:
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if command -v cygpath >/dev/null 2>&1; then
+            WORKSPACE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")"
+          else
+            WORKSPACE_DIR="$GITHUB_WORKSPACE"
+          fi
+          ASSET_DIR="$WORKSPACE_DIR/.private-assets"
+          CUE="$ASSET_DIR/Gex - Enter the Gecko.cue"
+          BIN="$ASSET_DIR/Gex - Enter the Gecko.bin"
+          test -s "$CUE" || { echo "::error::Private CUE file is missing from gexprivateassets."; exit 1; }
+
+          AUTH_JSON="$(curl --fail --silent --show-error --user "${DROPBOX_APP_KEY}:${DROPBOX_APP_SECRET}" \
+            --data-urlencode "grant_type=refresh_token" \
+            --data-urlencode "refresh_token=${DROPBOX_REFRESH_TOKEN}" \
+            https://api.dropbox.com/oauth2/token)"
+          DROPBOX_ACCESS_TOKEN="$(printf '%s' "$AUTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+          unset AUTH_JSON
+          echo "::add-mask::${DROPBOX_ACCESS_TOKEN}"
+          curl --fail --silent --show-error --location --request POST \
+            --header "Authorization: Bearer ${DROPBOX_ACCESS_TOKEN}" \
+            --header 'Dropbox-API-Arg: {"path": "/Gex - Enter the Gecko.bin"}' \
+            --output "$BIN" \
+            https://content.dropboxapi.com/2/files/download
+          unset DROPBOX_ACCESS_TOKEN
+
+          ACTUAL_SIZE="$(wc -c < "$BIN" | tr -d '[:space:]')"
+          if [[ "$ACTUAL_SIZE" != "266662704" ]]; then
+            echo "::error::Unexpected Gex BIN size: ${ACTUAL_SIZE} bytes (expected 266662704)."
+            exit 1
+          fi
+
+          python3 - "$BIN" <<'PY'
+          import hashlib, sys
+          expected = "e7fdd511aae008e6d22b394dd18b775eda71ec8b2b3d90409679885a19718f1a"
+          outer = hashlib.sha256()
+          with open(sys.argv[1], "rb") as f:
+              while True:
+                  block = f.read(4 * 1024 * 1024)
+                  if not block:
+                      break
+                  outer.update(hashlib.sha256(block).digest())
+          actual = outer.hexdigest()
+          if actual != expected:
+              raise SystemExit("Dropbox content-hash mismatch; refusing to recompile an unexpected disc image.")
+          print("Disc image verified against the private Dropbox manifest.")
+          PY
+
+      - name: Generate and build with PSXRecomp
+        run: |
+          set -euo pipefail
+          if command -v cygpath >/dev/null 2>&1; then
+            TEMP_DIR="$(cygpath -u "$RUNNER_TEMP")"
+            WORKSPACE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")"
+          else
+            TEMP_DIR="$RUNNER_TEMP"
+            WORKSPACE_DIR="$GITHUB_WORKSPACE"
+          fi
+          ASSET_DIR="$WORKSPACE_DIR/.private-assets"
+          PROJECTS_DIR="$TEMP_DIR/gex-projects"
+          PROJECT="$PROJECTS_DIR/GexEnterTheGeckoRecomp"
+          mkdir -p "$PROJECTS_DIR"
+          rm -rf "$PROJECT"
+          export PSXRECOMP_URL="$PSXRECOMP_URL"
+          export RECOMP_UI_URL="$RECOMP_UI_URL"
+          bash "$FRAMEWORK_CHECKOUT/tools/new_project_layout/setup_project.sh" \
+            --disc "$ASSET_DIR/Gex - Enter the Gecko.cue" \
+            --dir "$PROJECTS_DIR" \
+            --name GexEnterTheGeckoRecomp \
+            --players 1 \
+            --zip-prefix gex \
+            --github-owner NVDEMU \
+            --github-repo gexenterthegeckorecomp \
+            --description "Native recompilation of Gex: Enter the Gecko (USA)" \
+            --publisher "Crystal Dynamics / Midway" \
+            --year 1998 \
+            --region USA \
+            --psxrecomp-ref "$PSXRECOMP_SHA" \
+            --recomp-ui-ref "$RECOMP_UI_SHA" \
+            --enable-recomp-ui \
+            --enable-wizard \
+            --no-netplay \
+            --enable-ci \
+            --no-fetch-boxart \
+            --stage-disc \
+            --generate \
+            --enable-build \
+            --no-github \
+            --yes
+
+          test -d "$PROJECT/build-release" || { echo "::error::PSXRecomp runtime build directory was not created."; exit 1; }
+          test -f "$PROJECT/scripts/package_release.sh" || { echo "::error::PSXRecomp release packager was not generated."; exit 1; }
+          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Package native build (without original game media)
+        run: |
+          set -euo pipefail
+          if command -v cygpath >/dev/null 2>&1; then
+            WORKSPACE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")"
+          else
+            WORKSPACE_DIR="$GITHUB_WORKSPACE"
+          fi
+          cd "$PROJECT_DIR"
+          # The built application needs a user's own disc at run time. Remove
+          # the CI-only source media before invoking the official PSXRecomp packager.
+          rm -rf disc
+          export RELEASE_VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          bash scripts/package_release.sh build-release "${{ matrix.artifact }}" build-recompiler
+          mkdir -p "$WORKSPACE_DIR/dist"
+          PACKAGE="$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$PACKAGE" || { echo "::error::PSXRecomp packager produced no zip."; exit 1; }
+          cp "$PACKAGE" "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip"
+
+      - name: Upload platform package
+        uses: actions/upload-artifact@v4
+        with:
+          name: gex-${{ matrix.artifact }}
+          path: dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-nightly:
+    name: Publish Nightly release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download native packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gex-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish or replace Nightly
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly
+          name: Nightly
+          prerelease: true
+          makeLatest: false
+          allowUpdates: true
+          removeArtifacts: true
+          replacesArtifacts: true
+          artifacts: dist/*.zip
+          body: |
+            Automated native builds of Gex: Enter the Gecko Recomp using PSXRecomp.
+            Original game media is not included. Supply your own legally obtained disc.
+            These builds are experimental; successful compilation does not establish full-game compatibility.
+          token: ${{ secrets.GITHUB_TOKEN }}
