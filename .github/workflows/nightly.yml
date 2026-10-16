@@ -161,10 +161,12 @@ jobs:
           new_cmake = 'cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DPSX_GAME_VERSION="${RELEASE_VERSION:-0.1.0}"'
           if source.count(old_submodules) != 1:
               raise SystemExit("Could not safely patch the pinned PSXRecomp scaffolder's submodule block.")
-          if source.count(old_cmake) != 1:
-              raise SystemExit("Could not safely patch the pinned PSXRecomp scaffolder's CMake version setting.")
+          if old_cmake not in source:
+              raise SystemExit("Could not find the pinned PSXRecomp scaffolder's CMake version setting.")
           source = source.replace(old_submodules, new_submodules, 1)
-          source = source.replace(old_cmake, new_cmake, 1)
+          # The same command text also appears in BUILD_HINT; replace every
+          # occurrence so the executable build and printed hint remain aligned.
+          source = source.replace(old_cmake, new_cmake)
           path.write_text(source)
           print("Patched scaffolder: pin exact framework SHAs and stamp the nightly version into CMake.")
           PY
