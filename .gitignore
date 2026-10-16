@@ -1,0 +1,18 @@
+# Original media, extracted executables, and any local BIOS dumps
+disc/
+*.cue
+*.bin
+*.iso
+*.img
+*.chd
+*.pbp
+SCPH*.BIN
+*.elf
+
+# Generated code and native builds
+generated/
+build/
+build-*/
+dist/
+.cache/
+.private-assets/
