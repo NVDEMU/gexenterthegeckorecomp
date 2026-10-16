@@ -14,10 +14,10 @@ GitHub Actions builds a **Nightly** release when commits reach `main` and can be
 
 ## Getting started
 
-1. Download the zip for your platform from [Releases](https://github.com/NVDEMU/gexenterthegeckorecomp/releases).
-2. Extract it and launch the included application.
-3. Select your own legally obtained **Gex: Enter the Gecko (USA)** disc image when prompted. The game's original disc image is not included.
-4. Report the exact platform, game revision, and any log/error details when a regression occurs.
+1. Download the **DMG** for your Mac from [Nightly Releases](https://github.com/NVDEMU/gexenterthegeckorecomp/releases/tag/nightly). Use **macos-arm64** on Apple Silicon (M-series) Macs, or **macos-x64** on Intel Macs. Windows users should use the Windows ZIP.
+2. Open the DMG and copy **Gex Enter the Gecko.app** to Applications or another writable folder.
+3. Launch the app and select your own legally obtained **Gex: Enter the Gecko (USA)** disc image when prompted. The original game disc is not included.
+4. If macOS reports a launch failure, include the downloaded asset name and the crash report from **Report** so the specific loader/runtime failure can be diagnosed.
 
 The game is single-player. The project starts with PSXRecomp's standard launcher, runtime settings, and setup wizard; game-specific enhancements will be added only after baseline behavior is tested.
 
