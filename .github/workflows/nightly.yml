@@ -330,7 +330,7 @@ jobs:
 
           ARCHS="$(lipo -archs "$GAME_BIN")"
           echo "Built game executable: $BIN_NAME ($ARCHS)"
-          case "\${{ matrix.artifact }}" in
+          case "${{ matrix.artifact }}" in
             macos-arm64)
               [[ " $ARCHS " == *" arm64 "* ]] || { echo "::error::Apple Silicon package does not contain arm64: $ARCHS"; exit 1; }
               ;;
@@ -399,9 +399,9 @@ jobs:
 
           # ditto preserves the app bundle's resource metadata and symlinks.
           ditto -c -k --sequesterRsrc --keepParent "$APP" \
-            "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-\${{ matrix.artifact }}.app.zip"
+            "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.app.zip"
           hdiutil create -volname "Gex Enter the Gecko" -srcfolder "$APP" -ov -format UDZO \
-            "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-\${{ matrix.artifact }}.dmg"
+            "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.dmg"
           echo "Verified .app bundle and created DMG for $ARCHS."
 
       - name: Upload platform package
