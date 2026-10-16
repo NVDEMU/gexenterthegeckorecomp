@@ -126,21 +126,22 @@ jobs:
 
           # The upstream scaffolder passes --psxrecomp-ref/--recomp-ui-ref
           # to "git submodule add -b", which accepts branch names, not raw SHAs.
-          # Patch this temporary checkout to clone master and then pin exact SHAs.
+          # It also hardcodes the CMake build version. Patch this temporary
+          # checkout to pin the requested SHAs and stamp the matching nightly version.
           python3 - "$FRAMEWORK_CHECKOUT/tools/new_project_layout/setup_project.sh" <<'PY'
           from pathlib import Path
           import sys
 
           path = Path(sys.argv[1])
           source = path.read_text()
-          old = "\n".join([
+          old_submodules = "\n".join([
               'git submodule add -b "$PSXRECOMP_REF" "$PSXRECOMP_URL" psxrecomp',
               'if [ "$ENABLE_RECOMP_UI" -eq 1 ]; then',
               '    git submodule add -b "$RECOMP_UI_REF" "$RECOMP_UI_URL" recomp-ui',
               'fi',
               'git submodule update --init --recursive',
           ])
-          new = "\n".join([
+          new_submodules = "\n".join([
               'git submodule add -b master "$PSXRECOMP_URL" psxrecomp',
               'if [ "$ENABLE_RECOMP_UI" -eq 1 ]; then',
               '    git submodule add -b master "$RECOMP_UI_URL" recomp-ui',
@@ -156,10 +157,16 @@ jobs:
               '    git -C recomp-ui checkout --detach -q "$RECOMP_UI_REF"',
               'fi',
           ])
-          if source.count(old) != 1:
+          old_cmake = 'cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release'
+          new_cmake = 'cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DPSX_GAME_VERSION="${RELEASE_VERSION:-0.1.0}"'
+          if source.count(old_submodules) != 1:
               raise SystemExit("Could not safely patch the pinned PSXRecomp scaffolder's submodule block.")
-          path.write_text(source.replace(old, new, 1))
-          print("Patched scaffolder: clone branches, then check out the pinned PSXRecomp/recomp-ui SHAs.")
+          if source.count(old_cmake) != 1:
+              raise SystemExit("Could not safely patch the pinned PSXRecomp scaffolder's CMake version setting.")
+          source = source.replace(old_submodules, new_submodules, 1)
+          source = source.replace(old_cmake, new_cmake, 1)
+          path.write_text(source)
+          print("Patched scaffolder: pin exact framework SHAs and stamp the nightly version into CMake.")
           PY
 
           echo "FRAMEWORK_CHECKOUT=$FRAMEWORK_CHECKOUT" >> "$GITHUB_ENV"
@@ -254,6 +261,8 @@ jobs:
           rm -rf "$PROJECT"
           export PSXRECOMP_URL="$PSXRECOMP_URL"
           export RECOMP_UI_URL="$RECOMP_UI_URL"
+          export RELEASE_VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
           bash "$FRAMEWORK_CHECKOUT/tools/new_project_layout/setup_project.sh" \
             --disc "$ASSET_DIR/Gex - Enter the Gecko.cue" \
             --dir "$PROJECTS_DIR" \
