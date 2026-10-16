@@ -75,7 +75,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          brew install cmake ninja pkg-config sdl3 vulkan-headers shaderc molten-vk jq
+          brew install cmake ninja pkg-config sdl3 vulkan-headers shaderc molten-vk dylibbundler jq
 
       - name: Check required secrets
         shell: bash
@@ -313,64 +313,96 @@ jobs:
           test -n "$PACKAGE" || { echo "::error::PSXRecomp packager produced no zip."; exit 1; }
           cp "$PACKAGE" "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip"
 
-      - name: Build macOS .app bundle and DMG
+      - name: Build verified macOS .app bundle and DMG
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          PACKAGE="$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
-          test -n "$PACKAGE" || { echo "::error::No macOS package zip was produced."; exit 1; }
-          STAGE="$RUNNER_TEMP/gex-macos-stage"
-          APP="$STAGE/Gex Enter the Gecko.app"
-          CONTENTS="$APP/Contents"
-          MACOS="$CONTENTS/MacOS"
-          rm -rf "$STAGE"
-          mkdir -p "$MACOS"
-          ditto -x -k "$PACKAGE" "$RUNNER_TEMP/gex-macos-unpacked"
+
+          # Use PSXRecomp's CMake OUTPUT_NAME marker instead of guessing or renaming an executable.
+          BIN_MARKER="$PROJECT_DIR/build-release/psxrecomp_exe_name-psx-runtime.txt"
+          test -s "$BIN_MARKER" || { echo "::error::PSXRecomp did not record the runtime executable name."; exit 1; }
+          BIN_NAME="$(tr -d '[:space:]' < "$BIN_MARKER")"
+          test -n "$BIN_NAME" || { echo "::error::PSXRecomp runtime executable name is empty."; exit 1; }
+          GAME_BIN="$PROJECT_DIR/build-release/$BIN_NAME"
+          test -f "$GAME_BIN" || { echo "::error::The named PSXRecomp executable is missing: $GAME_BIN"; ls -la "$PROJECT_DIR/build-release"; exit 1; }
+
+          ARCHS="$(lipo -archs "$GAME_BIN")"
+          echo "Built game executable: $BIN_NAME ($ARCHS)"
+          case "\${{ matrix.artifact }}" in
+            macos-arm64)
+              [[ " $ARCHS " == *" arm64 "* ]] || { echo "::error::Apple Silicon package does not contain arm64: $ARCHS"; exit 1; }
+              ;;
+            macos-x64)
+              [[ " $ARCHS " == *" x86_64 "* ]] || { echo "::error::Intel package does not contain x86_64: $ARCHS"; exit 1; }
+              ;;
+            *)
+              echo "::error::Unexpected macOS artifact name."; exit 1
+              ;;
+          esac
+
+          # The generic PSXRecomp ZIP carries the game's runtime overlay compiler.
+          # The framework packager creates the real bundle and validates linked libraries/signature.
+          PACKAGE="$(find "$PROJECT_DIR/dist" -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$PACKAGE" || { echo "::error::PSXRecomp runtime ZIP is missing."; exit 1; }
           UNPACKED="$RUNNER_TEMP/gex-macos-unpacked"
-          # The upstream bundle is a portable runtime tree. Keep every runtime
-          # file beside its executable inside Contents/MacOS so relative paths
-          # continue to resolve exactly as they do in the ZIP distribution.
-          EXECUTABLE="$(find "$UNPACKED" -type f -name 'GexEnterTheGeckoRecomp' -perm -111 -print -quit)"
-          if [[ -z "$EXECUTABLE" ]]; then
-            EXECUTABLE="$(find "$UNPACKED" -type f -perm -111 ! -path '*/.git/*' -print -quit)"
-          fi
-          test -n "$EXECUTABLE" || { echo "::error::Could not locate the macOS game executable in the PSXRecomp package."; find "$UNPACKED" -maxdepth 3 -type f; exit 1; }
-          cp -R "$UNPACKED"/. "$MACOS"/
-          if [[ "$EXECUTABLE" != "$UNPACKED"/* ]]; then
-            echo "::error::Resolved executable path was outside the unpacked package."; exit 1
-          fi
-          RELATIVE_EXECUTABLE="${EXECUTABLE#"$UNPACKED"/}"
-          if [[ "$RELATIVE_EXECUTABLE" != "GexEnterTheGeckoRecomp" ]]; then
-            if [[ -f "$MACOS/$RELATIVE_EXECUTABLE" ]]; then
-              mv "$MACOS/$RELATIVE_EXECUTABLE" "$MACOS/GexEnterTheGeckoRecomp"
+          rm -rf "$UNPACKED"
+          mkdir -p "$UNPACKED"
+          ditto -x -k "$PACKAGE" "$UNPACKED"
+          test -d "$UNPACKED/overlay_toolchain" || { echo "::error::ZIP does not contain overlay_toolchain/."; exit 1; }
+          test -s "$UNPACKED/psx_game_version.txt" || { echo "::error::ZIP does not contain psx_game_version.txt."; exit 1; }
+          cp "$UNPACKED/psx_game_version.txt" "$PROJECT_DIR/psx_game_version.txt"
+
+          # The pinned macOS packager requires the framework's third-party notices in the title tree.
+          mkdir -p "$PROJECT_DIR/runtime/licenses"
+          cp -R "$FRAMEWORK_CHECKOUT/runtime/licenses/." "$PROJECT_DIR/runtime/licenses/"
+
+          APP_OUT="$RUNNER_TEMP/gex-macos-package"
+          rm -rf "$APP_OUT"
+          mkdir -p "$APP_OUT"
+          bash "$FRAMEWORK_CHECKOUT/tools/package_release_macos.sh" \
+            --repo "$PROJECT_DIR" \
+            --build "$PROJECT_DIR/build-release" \
+            --bin "$BIN_NAME" \
+            --app-name "Gex Enter the Gecko" \
+            --package "GexEnterTheGeckoRecomp" \
+            --bundle-id "com.nvdemu.gexenterthegecko.recomp" \
+            --version "$RELEASE_VERSION" \
+            --out "$APP_OUT" \
+            --game-config game.toml \
+            --data psx_game_version.txt \
+            --doc README.md \
+            --no-zip \
+            --no-dmg
+
+          APP="$(find "$APP_OUT/stage" -type d -name 'Gex Enter the Gecko.app' -print -quit)"
+          test -n "$APP" || { echo "::error::Official macOS packager did not produce the .app bundle."; find "$APP_OUT" -maxdepth 4 -print; exit 1; }
+
+          # Preserve the overlay compiler files. A symlink from MacOS to Resources
+          # keeps the runtime's executable-relative paths intact.
+          mkdir -p "$APP/Contents/Resources/overlay_toolchain"
+          cp -R "$UNPACKED/overlay_toolchain/." "$APP/Contents/Resources/overlay_toolchain/"
+          ln -s "../Resources/overlay_toolchain" "$APP/Contents/MacOS/overlay_toolchain"
+
+          # Re-sign after adding the overlay compiler and validate the finished bundle.
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q 'Mach-O'; then
+              codesign --force --sign - "$candidate"
             fi
-          fi
-          cat > "$CONTENTS/Info.plist" <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleDevelopmentRegion</key><string>en</string>
-            <key>CFBundleExecutable</key><string>GexEnterTheGeckoRecomp</string>
-            <key>CFBundleIdentifier</key><string>com.nvdemu.gexenterthegecko.recomp</string>
-            <key>CFBundleName</key><string>Gex Enter the Gecko</string>
-            <key>CFBundleDisplayName</key><string>Gex: Enter the Gecko</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>0.0.${GITHUB_RUN_NUMBER}</string>
-            <key>CFBundleVersion</key><string>${GITHUB_RUN_NUMBER}</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-          plutil -lint "$CONTENTS/Info.plist"
-          chmod +x "$MACOS/GexEnterTheGeckoRecomp"
-          # Retain a downloadable app ZIP as well as a drag-and-drop DMG.
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.app.zip"
-          hdiutil create -volname "Gex Enter the Gecko" -srcfolder "$APP" -ov -format UDZO "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.dmg"
-          echo "Created macOS app bundle ZIP and DMG."
+          done < <(find "$APP/Contents/Resources/overlay_toolchain" -type f -print0)
+          codesign --force --sign - "$APP/Contents/MacOS/$BIN_NAME"
+          codesign --force --sign - "$APP"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --deep "$APP" || { echo "::error::macOS app signature verification failed."; exit 1; }
+          test -x "$APP/Contents/MacOS/Gex Enter the Gecko" || { echo "::error::App launcher shim is missing or not executable."; exit 1; }
+
+          # ditto preserves the app bundle's resource metadata and symlinks.
+          ditto -c -k --sequesterRsrc --keepParent "$APP" \
+            "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-\${{ matrix.artifact }}.app.zip"
+          hdiutil create -volname "Gex Enter the Gecko" -srcfolder "$APP" -ov -format UDZO \
+            "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-\${{ matrix.artifact }}.dmg"
+          echo "Verified .app bundle and created DMG for $ARCHS."
 
       - name: Upload platform package
         uses: actions/upload-artifact@v4
