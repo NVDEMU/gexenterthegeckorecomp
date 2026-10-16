@@ -1,0 +1,68 @@
+format_version = 7
+id = "nvd.gex.scott-the-woz-voicepack"
+version = "0.1.0"
+name = "Scott the Woz Voice Pack"
+author = "NVDEMU"
+description = "Experimental four-clip voice replacement test for Gex: Enter the Gecko."
+license = "MIT"
+resolver = "declarative"
+channel = "experimental"
+
+[[target]]
+game_id = "SLUS-00598"
+
+[[feature]]
+id = "scott-voicepack"
+name = "Scott the Woz Voice Pack"
+description = "Replaces selected gameplay moments with four bundled Scott voice clips."
+group = "Audio"
+default_enabled = false
+channel = "experimental"
+
+[[plugin]]
+feature = "scott-voicepack"
+id = "nvd.gex.scott-voicepack"
+
+[[resource]]
+feature = "scott-voicepack"
+id = "level-entry"
+label = "Level-entry voice"
+description = "Hey all, Scott here."
+format = "file"
+default = "audio/level-entry.vag"
+file_patterns = "*.vag"
+file_description = "PS1 ADPCM voice clips"
+required = true
+
+[[resource]]
+feature = "scott-voicepack"
+id = "movement-jump"
+label = "Running / jumping voice"
+description = "Wii Play? Do you?"
+format = "file"
+default = "audio/movement-jump.vag"
+file_patterns = "*.vag"
+file_description = "PS1 ADPCM voice clips"
+required = true
+
+[[resource]]
+feature = "scott-voicepack"
+id = "death"
+label = "Death voice"
+description = "Everything Nintendo Doesn't Make Is Bullshit."
+format = "file"
+default = "audio/death.vag"
+file_patterns = "*.vag"
+file_description = "PS1 ADPCM voice clips"
+required = true
+
+[[resource]]
+feature = "scott-voicepack"
+id = "idle"
+label = "Idle voice"
+description = "My Obligation to Society."
+format = "file"
+default = "audio/idle.vag"
+file_patterns = "*.vag"
+file_description = "PS1 ADPCM voice clips"
+required = true

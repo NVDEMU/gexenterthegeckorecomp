@@ -21,6 +21,16 @@ GitHub Actions builds a **Nightly** release when commits reach `main` and can be
 
 The game is single-player. The project starts with PSXRecomp's standard launcher, runtime settings, and setup wizard; game-specific enhancements will be added only after baseline behavior is tested.
 
+
+## Experimental voice mod
+
+The public repository includes four source MP3s for an optional, default-off
+**Scott the Woz Voice Pack**. The Nightly workflow converts them into PS1 ADPCM
+resources and bundles an experimental mod into Windows/macOS releases. Its
+first-pass level, movement, death, and idle triggers need real in-game testing;
+see [the voice-pack notes](docs/SCOTT_VOICEPACK.md). The original disc is still
+required and is never patched.
+
 ## Asset separation
 
 The public repository contains build and project automation only. The private repository `NVDEMU/gexprivateassets` stores the CUE sheet and source metadata. The 254 MiB BIN is kept in your Dropbox and downloaded in CI using a GitHub Actions secret containing a Dropbox shared URL (simplest) or Dropbox OAuth credentials. The workflow validates the file's size and Dropbox content hash before using it. Original game data and generated game C are not committed to this public repository or included in release zips.

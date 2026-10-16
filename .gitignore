@@ -16,3 +16,6 @@ build-*/
 dist/
 .cache/
 .private-assets/
+
+# Generated PS1 ADPCM voice resources (created by GitHub Actions from public MP3 sources)
+mods/preloaded/packages/nvd.gex.scott-the-woz-voicepack/0.1.0/audio/*.vag
