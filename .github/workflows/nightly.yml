@@ -311,7 +311,7 @@ jobs:
           mkdir -p "$WORKSPACE_DIR/dist"
           PACKAGE="$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
           test -n "$PACKAGE" || { echo "::error::PSXRecomp packager produced no zip."; exit 1; }
-          cp "$PACKAGE" "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip"
+          cp "$PACKAGE" "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.zip"
 
       - name: Build macOS .app bundle and DMG
         if: runner.os == 'macOS'
@@ -368,8 +368,8 @@ jobs:
           plutil -lint "$CONTENTS/Info.plist"
           chmod +x "$MACOS/GexEnterTheGeckoRecomp"
           # Retain a downloadable app ZIP as well as a drag-and-drop DMG.
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.app.zip"
-          hdiutil create -volname "Gex Enter the Gecko" -srcfolder "$APP" -ov -format UDZO "$WORKSPACE_DIR/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.app.zip"
+          hdiutil create -volname "Gex Enter the Gecko" -srcfolder "$APP" -ov -format UDZO "$GITHUB_WORKSPACE/dist/GexEnterTheGeckoRecomp-${{ matrix.artifact }}.dmg"
           echo "Created macOS app bundle ZIP and DMG."
 
       - name: Upload platform package
