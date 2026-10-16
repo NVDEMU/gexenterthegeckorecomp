@@ -23,7 +23,7 @@ The game is single-player. The project starts with PSXRecomp's standard launcher
 
 ## Asset separation
 
-The public repository contains build and project automation only. The private repository `NVDEMU/gexprivateassets` stores the CUE sheet and source metadata. The 254 MiB BIN is kept in your Dropbox and downloaded in CI through Dropbox OAuth credentials. The workflow validates the file's size and Dropbox content hash before using it. Original game data and generated game C are not committed to this public repository or included in release zips.
+The public repository contains build and project automation only. The private repository `NVDEMU/gexprivateassets` stores the CUE sheet and source metadata. The 254 MiB BIN is kept in your Dropbox and downloaded in CI using a GitHub Actions secret containing a Dropbox shared URL (simplest) or Dropbox OAuth credentials. The workflow validates the file's size and Dropbox content hash before using it. Original game data and generated game C are not committed to this public repository or included in release zips.
 
 ## Configure automated builds
 
